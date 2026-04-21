@@ -1,93 +1,450 @@
-# task05-task
+# Домашнее задание 5: `shopx`
 
+В этом задании нужно реализовать многосервисное приложение на тему **`Интернет-магазин X`**.
+Тематика магазина может быть любой: книги, электроника, мерч, настольные игры, кофе, одежда и так далее.
+Главное, чтобы технический контракт задания был соблюдён.
 
+## Описание задачи
 
-## Getting started
+Нужно реализовать учебную микросервисную систему из трёх процессов:
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+1. `shop-backend` — основной HTTP-бэкенд магазина;
+2. `auth-service` — сервис авторизации, доступный для backend только по `gRPC`;
+3. `order-worker` — многопоточный сервис обработки очереди заказов.
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+Архитектура должна выглядеть так:
 
-## Add your files
+- пользователь работает с `shop-backend` по HTTP/JSON;
+- `shop-backend` вызывает `auth-service` по `gRPC`;
+- `auth-service` хранит пользователей в `Postgres`;
+- `auth-service` хранит пользовательские сессии в `Redis`;
+- после оформления заказа `shop-backend` публикует событие в `Kafka`;
+- `order-worker` читает сообщения из Kafka и обрабатывает заказы конкурентно, используя `goroutines` и `channels`.
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+Фронтенд, HTML и браузерный интерфейс не требуются. Достаточно HTTP API.
 
+## Требования к сдаче
+
+1. Следуй стандартной структуре Go-проекта с несколькими исполняемыми файлами.
+2. В проекте должны быть три собираемых бинарных файла:
+   - `shop-backend`
+   - `auth-service`
+   - `order-worker`
+3. Основной backend обязан работать по HTTP/JSON.
+4. Сервис авторизации обязан работать по `gRPC`.
+5. Хранение пользователей обязательно должно быть в `Postgres`.
+6. Хранение пользовательских сессий обязательно должно быть в `Redis`.
+7. После оформления заказа сообщение обязательно должно публиковаться в `Kafka`.
+8. Обработка заказов должна выполняться отдельным многопоточным сервисом `order-worker`.
+9. В `order-worker` обязательно должно быть осмысленное конкурентное решение: например, `worker pool`, `pipeline`, `fan-out/fan-in`, `producer-consumer`.
+10. Юнит-тесты прикладывать в проект не нужно.
+11. Можно использовать сторонние библиотеки, но проверь, что нужные версии доступны через `https://proxy.golang.org`.
+12. Все сервисы должны корректно завершаться по `SIGINT` и `SIGTERM`.
+13. Схема БД и нужные таблицы должны создаваться автоматически при старте приложения или через встроенную миграцию, запускаемую самим приложением.
+
+## Исполняемые файлы
+
+### 1. `auth-service`
+
+**Сборка из:** `cmd/auth-service`
+
+**Назначение:** регистрация пользователя, логин, валидация сессии.
+
+**Синтаксис запуска:**
+
+```bash
+auth-service \
+  --listen 127.0.0.1:9090 \
+  --postgres "postgres://shopx:shopx@localhost:5432/shopx?sslmode=disable" \
+  --redis "127.0.0.1:6379"
 ```
-cd existing_repo
-git remote add origin https://git.culab.ru/courses/msc-golang-2026-spring/task05/task05-task.git
-git branch -M main
-git push -uf origin main
+
+### 2. `shop-backend`
+
+**Сборка из:** `cmd/shop-backend`
+
+**Назначение:** HTTP API магазина.
+
+**Синтаксис запуска:**
+
+```bash
+shop-backend \
+  --listen 127.0.0.1:8080 \
+  --auth-grpc 127.0.0.1:9090 \
+  --postgres "postgres://shopx:shopx@localhost:5432/shopx?sslmode=disable" \
+  --kafka "localhost:9092" \
+  --orders-topic "orders.created"
 ```
 
-## Integrate with your tools
+### 3. `order-worker`
 
-- [ ] [Set up project integrations](https://git.culab.ru/courses/msc-golang-2026-spring/task05/task05-task/-/settings/integrations)
+**Сборка из:** `cmd/order-worker`
 
-## Collaborate with your team
+**Назначение:** конкурентная обработка заказов из Kafka.
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+**Синтаксис запуска:**
 
-## Test and Deploy
+```bash
+order-worker \
+  --postgres "postgres://shopx:shopx@localhost:5432/shopx?sslmode=disable" \
+  --kafka "localhost:9092" \
+  --orders-topic "orders.created" \
+  --group-id "shopx-workers" \
+  --workers 3
+```
 
-Use the built-in continuous integration in GitLab.
+## Архитектурные требования
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+### Общая модель
 
-***
+- `shop-backend` не должен хранить пользователей и пароли локально;
+- все операции регистрации, логина и проверки токена должны проходить через `auth-service` по `gRPC`;
+- пароли должны храниться в `Postgres` только в виде хеша;
+- сессии должны храниться в `Redis`;
+- заказ после HTTP-оформления не должен синхронно обрабатываться в backend;
+- backend должен записать заказ в БД со статусом `new`, опубликовать событие в Kafka и быстро вернуть ответ клиенту;
+- `order-worker` должен получать сообщение из Kafka и менять статус заказа минимум по цепочке `new -> processing -> processed` либо `new -> processing -> failed`.
 
-# Editing this README
+### Конкурентность
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+`order-worker` — это ключевая многопоточная часть задания.
 
-## Suggestions for a good README
+Минимально требуется:
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+1. чтение сообщений из Kafka;
+2. передача задач на обработку в несколько горутин;
+3. безопасное обновление статусов заказов без гонок данных;
+4. корректное завершение воркеров по сигналу;
+5. использование как минимум одного узнаваемого concurrency-паттерна.
 
-## Name
-Choose a self-explaining name for your project.
+Примеры допустимых решений:
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+- `worker pool` для параллельной обработки заказов;
+- `pipeline` вида `consume -> decode -> process -> persist`;
+- `fan-out/fan-in` для распределения сообщений и сбора результатов;
+- `producer-consumer` на каналах;
+- `context cancellation` для graceful shutdown.
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+## Обязательный gRPC-контракт
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+В проекте должен быть proto-файл:
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+```text
+api/auth/v1/auth.proto
+```
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+Пакет:
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+```text
+auth.v1
+```
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+Сервис:
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+```text
+AuthService
+```
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+Минимально обязательные RPC:
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+1. `Register`
+2. `Login`
+3. `Validate`
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+Рекомендуемый смысл методов:
 
-## License
-For open source projects, say how it is licensed.
+- `Register` — создать пользователя;
+- `Login` — проверить пароль, создать сессию в Redis и вернуть токен;
+- `Validate` — проверить токен сессии и вернуть данные пользователя.
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+Для удобства тестирования `auth-service` должен включать **gRPC reflection**.
+
+## Обязательный HTTP API backend
+
+### 1. `POST /api/register`
+
+**Тело запроса:**
+
+```json
+{
+  "email": "alice@example.com",
+  "password": "secret123",
+  "name": "Alice"
+}
+```
+
+**Успешный ответ:** `201 Created`
+
+```json
+{
+  "id": "user-1",
+  "email": "alice@example.com",
+  "name": "Alice"
+}
+```
+
+### 2. `POST /api/login`
+
+**Тело запроса:**
+
+```json
+{
+  "email": "alice@example.com",
+  "password": "secret123"
+}
+```
+
+**Успешный ответ:** `200 OK`
+
+```json
+{
+  "sessionToken": "token-abc"
+}
+```
+
+После логина токен должен быть сохранён в `Redis`.
+
+### 3. `GET /api/me`
+
+Требует HTTP-заголовок:
+
+```text
+X-Session-Token: token-abc
+```
+
+**Успешный ответ:** `200 OK`
+
+```json
+{
+  "id": "user-1",
+  "email": "alice@example.com",
+  "name": "Alice"
+}
+```
+
+Backend должен валидировать токен не самостоятельно, а через `gRPC`-вызов `auth-service`.
+
+### 4. `POST /api/orders`
+
+Требует HTTP-заголовок:
+
+```text
+X-Session-Token: token-abc
+```
+
+**Тело запроса:**
+
+```json
+{
+  "items": [
+    { "sku": "book-1", "qty": 2 },
+    { "sku": "pen-7", "qty": 1 }
+  ]
+}
+```
+
+**Успешный ответ:** `202 Accepted`
+
+```json
+{
+  "id": "order-1",
+  "status": "new"
+}
+```
+
+Поведение:
+
+- backend валидирует пользователя через `auth-service`;
+- создаёт запись о заказе в таблице `orders`;
+- сохраняет заказ со статусом `new`;
+- публикует сообщение в Kafka topic `orders.created`;
+- не обрабатывает заказ синхронно в HTTP-обработчике.
+
+### 5. `GET /api/orders/{id}`
+
+Требует HTTP-заголовок:
+
+```text
+X-Session-Token: token-abc
+```
+
+**Успешный ответ:** `200 OK`
+
+```json
+{
+  "id": "order-1",
+  "userId": "user-1",
+  "status": "processed",
+  "items": [
+    { "sku": "book-1", "qty": 2 },
+    { "sku": "pen-7", "qty": 1 }
+  ]
+}
+```
+
+Допустимые статусы:
+
+- `new`
+- `processing`
+- `processed`
+- `failed`
+
+## Требования к данным
+
+### Таблица `users`
+
+В `Postgres` обязательно должна быть таблица `users` минимум с такими полями:
+
+- `id`
+- `email`
+- `name`
+- `password_hash`
+- `created_at`
+
+Требования:
+
+- `email` должен быть уникальным;
+- пароль в открытом виде хранить запрещено;
+- для хранения хеша рекомендуется `bcrypt`.
+
+### Таблица `orders`
+
+В `Postgres` обязательно должна быть таблица `orders` минимум с такими полями:
+
+- `id`
+- `user_id`
+- `status`
+- `items`
+- `created_at`
+- `updated_at`
+
+Поле `items` может быть реализовано как `JSON/JSONB`, строка JSON или иным понятным способом, если данные
+корректно читаются и возвращаются через API.
+
+### Redis
+
+В `Redis` должны храниться сессии пользователя.
+
+Минимальное ожидаемое поведение:
+
+- после логина появляется запись с токеном;
+- по токену можно определить пользователя;
+- при проверке `/api/me` и защищённых заказов backend получает пользователя через `auth-service`.
+
+Рекомендуемый ключ:
+
+```text
+session:<token>
+```
+
+## Требования к обработке заказов
+
+`order-worker` обязан:
+
+1. подключаться к Kafka;
+2. читать сообщения из topic `orders.created`;
+3. обрабатывать сообщения конкурентно с количеством воркеров `--workers`;
+4. менять статус заказа на `processing`;
+5. после успешной обработки менять статус на `processed`;
+6. при ошибке помечать заказ как `failed`;
+7. корректно закрывать consumer и завершать воркеры по сигналу.
+
+Сама бизнес-логика обработки может быть упрощённой. Например:
+
+- искусственная задержка;
+- проверка состава заказа;
+- имитация резервирования;
+- расчёт стоимости;
+- запись служебного события в лог.
+
+Главное, чтобы было видно асинхронную и конкурентную обработку очереди.
+
+## Требования к завершению
+
+Все три сервиса должны корректно реагировать на `SIGINT` и `SIGTERM`.
+
+Минимально требуется:
+
+1. перестать принимать новые запросы или новые сообщения;
+2. завершить текущие операции корректно;
+3. закрыть соединения с Postgres, Redis, Kafka и gRPC;
+4. завершить процесс без паники и зависания.
+
+## Что не требуется
+
+В этом задании не нужно:
+
+- делать frontend;
+- реализовывать оплату;
+- интегрироваться с внешними платёжными системами;
+- делать полноценный каталог товаров из отдельной БД;
+- реализовывать роли администратора;
+- писать unit-тесты внутри студенческого проекта.
+
+## Пример локального сценария
+
+```bash
+# 1. auth-service
+./auth-service \
+  --listen 127.0.0.1:9090 \
+  --postgres "postgres://shopx:shopx@localhost:5432/shopx?sslmode=disable" \
+  --redis "127.0.0.1:6379"
+
+# 2. shop-backend
+./shop-backend \
+  --listen 127.0.0.1:8080 \
+  --auth-grpc 127.0.0.1:9090 \
+  --postgres "postgres://shopx:shopx@localhost:5432/shopx?sslmode=disable" \
+  --kafka "localhost:9092" \
+  --orders-topic "orders.created"
+
+# 3. order-worker
+./order-worker \
+  --postgres "postgres://shopx:shopx@localhost:5432/shopx?sslmode=disable" \
+  --kafka "localhost:9092" \
+  --orders-topic "orders.created" \
+  --group-id "shopx-workers" \
+  --workers 3
+```
+
+Примеры запросов:
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/register \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"secret123","name":"Alice"}'
+
+curl -X POST http://127.0.0.1:8080/api/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"secret123"}'
+
+curl http://127.0.0.1:8080/api/me \
+  -H 'X-Session-Token: token-abc'
+
+curl -X POST http://127.0.0.1:8080/api/orders \
+  -H 'Content-Type: application/json' \
+  -H 'X-Session-Token: token-abc' \
+  -d '{"items":[{"sku":"book-1","qty":2},{"sku":"pen-7","qty":1}]}'
+```
+
+## Запуск и проверка
+
+Сборка:
+
+```bash
+go build -o auth-service ./cmd/auth-service
+go build -o shop-backend ./cmd/shop-backend
+go build -o order-worker ./cmd/order-worker
+```
+
+Минимум, что должно проходить в автопроверке:
+
+- сборка всех трёх бинарников;
+- регистрация пользователя через backend;
+- логин через backend;
+- появление пользователя в `Postgres`;
+- появление сессии в `Redis`;
+- успешная валидация токена через `gRPC`;
+- создание заказа через backend;
+- асинхронный перевод заказа в `processed` сервисом `order-worker`;
+- graceful shutdown сервисов.
