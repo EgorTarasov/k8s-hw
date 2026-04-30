@@ -3,16 +3,18 @@ package configure
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/larek-tech/storage/kafka"
 )
 
-func NewKafkaTransport(dsn string) *kafka.KafkaGoTransport {
+func NewKafkaTransport(brokers, groupID string) *kafka.KafkaGoTransport {
 	ctx := context.Background()
 
-	cfg, err := kafka.NewCfgFromDSN(dsn)
-	if err != nil {
-		panic(fmt.Errorf("parse kafka dsn: %w", err))
+	cfg := kafka.Cfg{
+		Brokers:  splitBrokers(brokers),
+		GroupID:  groupID,
+		ClientID: "shopx",
 	}
 
 	tr, err := kafka.NewKafkaGoTransport(ctx, cfg)
@@ -20,4 +22,15 @@ func NewKafkaTransport(dsn string) *kafka.KafkaGoTransport {
 		panic(fmt.Errorf("init kafka transport: %w", err))
 	}
 	return tr
+}
+
+func splitBrokers(s string) []string {
+	parts := strings.Split(s, ",")
+	out := parts[:0]
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
