@@ -12,6 +12,7 @@ COPY . .
 
 ARG SERVICE
 RUN test -n "${SERVICE}" || (echo "SERVICE build arg is required" && exit 1)
+ENV GOFLAGS="-p=1" GOMEMLIMIT=512MiB GOGC=50
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/app ./cmd/${SERVICE}
 
 FROM alpine:${ALPINE_VERSION}
