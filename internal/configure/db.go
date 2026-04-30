@@ -18,7 +18,7 @@ func NewPostgres(dsn string) (*postgres.DB, *manager.Manager) {
 
 	db, trManager, err := postgres.New(ctx, cfg)
 	if err != nil {
-		panic(fmt.Errorf("failed to connect to database: %v\n", err))
+		panic(fmt.Errorf("failed to connect to database: %w", err))
 	}
 	return db, trManager
 }

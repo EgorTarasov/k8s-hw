@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	authv1 "github.com/EgorTarasov/shopx/internal/generated/auth/v1"
 	"github.com/EgorTarasov/shopx/internal/domain"
+	authv1 "github.com/EgorTarasov/shopx/internal/generated/auth/v1"
 	"github.com/EgorTarasov/shopx/internal/usecase/shop"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
