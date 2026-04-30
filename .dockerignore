@@ -6,3 +6,7 @@ docker-compose*.yml
 Dockerfile
 .dockerignore
 bin/
+
+# Frontend / nginx — served by the `web` service, never built into Go images.
+web/
+nginx.conf

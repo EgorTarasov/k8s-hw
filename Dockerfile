@@ -8,7 +8,11 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 
-COPY . .
+# Copy only what the Go build needs so unrelated changes (web/, nginx.conf,
+# README, ...) do not bust the build cache.
+COPY cmd ./cmd
+COPY internal ./internal
+COPY api ./api
 
 ARG SERVICE
 RUN test -n "${SERVICE}" || (echo "SERVICE build arg is required" && exit 1)

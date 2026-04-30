@@ -1,0 +1,17 @@
+.error {
+  color: var(--pico-color-red-500);
+  margin-top: 0.5rem;
+}
+
+.muted {
+  color: var(--pico-muted-color);
+  font-size: 0.875rem;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 2fr 1fr auto;
+  gap: 0.5rem;
+  align-items: end;
+  margin-bottom: 0.5rem;
+}

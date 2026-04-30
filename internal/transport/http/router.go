@@ -15,5 +15,5 @@ func Router(h *Handler, logger *slog.Logger) http.Handler {
 		ResponseErrorHandlerFunc: writer,
 	})
 	api.HandlerFromMux(strict, mux)
-	return ExtractToken(mux)
+	return CORS(ExtractToken(mux))
 }
