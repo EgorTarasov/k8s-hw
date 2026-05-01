@@ -55,9 +55,6 @@ func serve(ctx context.Context, logger *slog.Logger) error {
 
 	db, _ := configure.NewPostgres(config.Auth.PostgresDSN)
 	defer db.Close()
-	if err := configure.Migrate(ctx, db); err != nil {
-		return fmt.Errorf("migrate: %w", err)
-	}
 
 	rds := configure.NewRedis(config.Auth.RedisDSN)
 	defer rds.Close()

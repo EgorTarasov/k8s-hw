@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: web
-          image: ghcr.io/egortarasov/k8s-hw/web:dev
+          image: ghcr.io/egortarasov/k8s-hw/web:latest
           imagePullPolicy: Always
           ports:
             - name: http

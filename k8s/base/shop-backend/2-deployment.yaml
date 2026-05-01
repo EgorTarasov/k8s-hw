@@ -32,7 +32,7 @@ spec:
             limits:   { cpu: 200m, memory: 256Mi }
       containers:
         - name: shop-backend
-          image: ghcr.io/egortarasov/k8s-hw/shop-backend:dev
+          image: ghcr.io/egortarasov/k8s-hw/shop-backend:latest
           imagePullPolicy: Always
           ports:
             - name: http

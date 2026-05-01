@@ -32,7 +32,7 @@ spec:
             limits:   { cpu: 200m, memory: 256Mi }
       containers:
         - name: order-worker
-          image: ghcr.io/egortarasov/k8s-hw/order-worker:dev
+          image: ghcr.io/egortarasov/k8s-hw/order-worker:latest
           imagePullPolicy: Always
           envFrom:
             - configMapRef:

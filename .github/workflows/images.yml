@@ -35,6 +35,9 @@ jobs:
           - service: web
             dockerfile: Dockerfile.web
             build_args: ""
+          - service: migrator
+            dockerfile: Dockerfile
+            build_args: SERVICE=migrator
     steps:
       - uses: actions/checkout@v4
 

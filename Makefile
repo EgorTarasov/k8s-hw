@@ -7,7 +7,7 @@ OWNER    ?= egortarasov
 REPO     ?= k8s-hw
 TAG      ?= dev
 PLATFORM ?= linux/amd64
-SERVICES := auth-service shop-backend order-worker web
+SERVICES := auth-service shop-backend order-worker web migrator
 IMAGE    = $(REGISTRY)/$(OWNER)/$(REPO)/$*:$(TAG)
 
 GO_PKGS := $(shell go list ./... | grep -v '/internal/generated/')

@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: auth-service
-          image: ghcr.io/egortarasov/k8s-hw/auth-service:dev
+          image: ghcr.io/egortarasov/k8s-hw/auth-service:latest
           imagePullPolicy: Always
           ports:
             - name: grpc
