@@ -65,6 +65,15 @@ kubectl -n shopx wait --for=condition=complete job/kafka-init-topics --timeout=6
 
 После применения worker и shop-backend всегда поднимаются на готовом топике.
 
+Дополнительная гарантия — `initContainer` `wait-for-kafka-topic` в
+deployment'ах `order-worker` и `shop-backend`. Он блокирует старт
+основного контейнера до тех пор, пока `kafka-topics.sh --describe
+--topic orders.created` не отработает успешно. Это покрывает три
+условия одновременно: kafka доступна, Job отработал, топик
+существует. Если Job ещё не запустился (например, при кривом порядке
+применения) — initContainer просто будет полл'ить, пока топик не
+появится. Pod не перейдёт в `Running` без готовой kafka.
+
 ## Конфигурация через env
 
 Все Go-сервисы читают параметры из переменных окружения. Имена ключей в
