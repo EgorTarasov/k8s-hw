@@ -1,23 +1,27 @@
 ARG GO_VERSION=1.26
 ARG ALPINE_VERSION=3.20
 
-FROM golang:${GO_VERSION}-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS builder
 
 WORKDIR /src
 
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
-# Copy only what the Go build needs so unrelated changes (web/, nginx.conf,
-# README, ...) do not bust the build cache.
 COPY cmd ./cmd
 COPY internal ./internal
 COPY api ./api
 
 ARG SERVICE
+ARG TARGETOS
+ARG TARGETARCH
 RUN test -n "${SERVICE}" || (echo "SERVICE build arg is required" && exit 1)
-ENV GOFLAGS="-p=1" GOMEMLIMIT=512MiB GOGC=50
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/app ./cmd/${SERVICE}
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build,id=go-build-${TARGETOS}-${TARGETARCH} \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/app ./cmd/${SERVICE}
 
 FROM alpine:${ALPINE_VERSION}
 

@@ -6,6 +6,7 @@ REGISTRY ?= ghcr.io
 OWNER    ?= egortarasov
 REPO     ?= k8s-hw
 TAG      ?= dev
+PLATFORM ?= linux/amd64
 SERVICES := auth-service shop-backend order-worker web
 IMAGE    = $(REGISTRY)/$(OWNER)/$(REPO)/$*:$(TAG)
 
@@ -62,22 +63,40 @@ docker-login:
 	@echo "$$GITHUB_TOKEN" | docker login $(REGISTRY) -u $(OWNER) --password-stdin
 
 image-web:
-	docker build \
+	docker buildx build \
+	  --platform $(PLATFORM) \
 	  -f Dockerfile.web \
 	  -t $(REGISTRY)/$(OWNER)/$(REPO)/web:$(TAG) \
 	  -t $(REGISTRY)/$(OWNER)/$(REPO)/web:latest \
+	  --load \
 	  .
 
 image-%:
-	docker build \
+	docker buildx build \
+	  --platform $(PLATFORM) \
 	  --build-arg SERVICE=$* \
 	  -t $(IMAGE) \
 	  -t $(REGISTRY)/$(OWNER)/$(REPO)/$*:latest \
+	  --load \
 	  .
 
-push-%: image-%
-	docker push $(IMAGE)
-	docker push $(REGISTRY)/$(OWNER)/$(REPO)/$*:latest
+push-web:
+	docker buildx build \
+	  --platform $(PLATFORM) \
+	  -f Dockerfile.web \
+	  -t $(REGISTRY)/$(OWNER)/$(REPO)/web:$(TAG) \
+	  -t $(REGISTRY)/$(OWNER)/$(REPO)/web:latest \
+	  --push \
+	  .
+
+push-%:
+	docker buildx build \
+	  --platform $(PLATFORM) \
+	  --build-arg SERVICE=$* \
+	  -t $(IMAGE) \
+	  -t $(REGISTRY)/$(OWNER)/$(REPO)/$*:latest \
+	  --push \
+	  .
 
 images: $(addprefix image-,$(SERVICES))
 
