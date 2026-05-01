@@ -1,0 +1,33 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-init-topics
+  namespace: shopx
+spec:
+  backoffLimit: 10
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: init
+          image: apache/kafka:4.0.0
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -e
+              echo "waiting for kafka..."
+              until /opt/kafka/bin/kafka-broker-api-versions.sh \
+                    --bootstrap-server kafka:9092 >/dev/null 2>&1; do
+                sleep 2
+              done
+              echo "creating topic orders.created..."
+              /opt/kafka/bin/kafka-topics.sh \
+                --bootstrap-server kafka:9092 \
+                --create --if-not-exists \
+                --topic orders.created \
+                --partitions 3 \
+                --replication-factor 1
+              /opt/kafka/bin/kafka-topics.sh \
+                --bootstrap-server kafka:9092 \
+                --describe --topic orders.created

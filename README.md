@@ -31,7 +31,7 @@ k8s/base/
 ├── namespace.yaml
 ├── postgres/      0-secret · 1-service · 2-statefulset
 ├── redis/         0-service · 1-statefulset
-├── kafka/         0-service · 1-statefulset
+├── kafka/         0-service · 1-statefulset · 2-job-init-topics
 ├── auth-service/  0-secret · 1-configmap · 2-deployment · 3-service
 ├── shop-backend/  0-secret · 1-configmap · 2-deployment · 3-service
 ├── order-worker/  0-secret · 1-configmap · 2-deployment
@@ -41,6 +41,29 @@ k8s/base/
 Файлы пронумерованы внутри компонента для удобного чтения; порядок
 применения через `kubectl apply -R -f k8s/base` некритичен — controller
 loop сам разрулит зависимости.
+
+## Инициализация Kafka-топиков
+
+`kafka/2-job-init-topics.yaml` — `Job`, который дожидается готовности
+брокера и создаёт топик `orders.created` (3 партиции, replication 1) с
+флагом `--if-not-exists`.
+
+Зачем: при первом запуске возникает гонка — `order-worker` подключается
+к `consumer group` раньше, чем shop-backend опубликует первое сообщение,
+а значит раньше, чем сработает auto-create топика. Группа стабилизируется
+с пустым subscription'ом, новый rebalance под появившуюся партицию не
+триггерится, и сообщения копятся в логе никем не прочитанными.
+
+Job решает эту гонку: топик существует ещё до того, как worker впервые
+зайдёт в группу. Job идемпотентен (`--if-not-exists`), удаляется
+автоматически через 5 минут после успеха (`ttlSecondsAfterFinished`).
+
+```bash
+kubectl apply -f k8s/base/kafka/2-job-init-topics.yaml
+kubectl -n shopx wait --for=condition=complete job/kafka-init-topics --timeout=60s
+```
+
+После применения worker и shop-backend всегда поднимаются на готовом топике.
 
 ## Конфигурация через env
 
