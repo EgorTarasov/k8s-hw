@@ -1,5 +1,14 @@
 .PHONY: codegen codegen-clean proto proto-lint proto-clean oapi oapi-clean \
-        fmt fmt-check vet staticcheck lint check tools
+        fmt fmt-check vet staticcheck lint check tools \
+        docker-login images images-push image-% push-%
+
+REGISTRY ?= ghcr.io
+OWNER    ?= egortarasov
+REPO     ?= k8s-hw
+TAG      ?= dev
+PLATFORM ?= linux/amd64
+SERVICES := auth-service shop-backend order-worker web migrator
+IMAGE    = $(REGISTRY)/$(OWNER)/$(REPO)/$*:$(TAG)
 
 GO_PKGS := $(shell go list ./... | grep -v '/internal/generated/')
 GO_FILES := $(shell find . -type f -name '*.go' -not -path './internal/generated/*' -not -path './.git/*')
@@ -47,3 +56,48 @@ lint: fmt-check vet staticcheck
 
 check: lint
 	go build ./...
+
+# Login to ghcr.io. Expects GITHUB_TOKEN (PAT with write:packages) in env.
+docker-login:
+	@test -n "$$GITHUB_TOKEN" || (echo "GITHUB_TOKEN is required (PAT with write:packages)"; exit 1)
+	@echo "$$GITHUB_TOKEN" | docker login $(REGISTRY) -u $(OWNER) --password-stdin
+
+image-web:
+	docker buildx build \
+	  --platform $(PLATFORM) \
+	  -f Dockerfile.web \
+	  -t $(REGISTRY)/$(OWNER)/$(REPO)/web:$(TAG) \
+	  -t $(REGISTRY)/$(OWNER)/$(REPO)/web:latest \
+	  --load \
+	  .
+
+image-%:
+	docker buildx build \
+	  --platform $(PLATFORM) \
+	  --build-arg SERVICE=$* \
+	  -t $(IMAGE) \
+	  -t $(REGISTRY)/$(OWNER)/$(REPO)/$*:latest \
+	  --load \
+	  .
+
+push-web:
+	docker buildx build \
+	  --platform $(PLATFORM) \
+	  -f Dockerfile.web \
+	  -t $(REGISTRY)/$(OWNER)/$(REPO)/web:$(TAG) \
+	  -t $(REGISTRY)/$(OWNER)/$(REPO)/web:latest \
+	  --push \
+	  .
+
+push-%:
+	docker buildx build \
+	  --platform $(PLATFORM) \
+	  --build-arg SERVICE=$* \
+	  -t $(IMAGE) \
+	  -t $(REGISTRY)/$(OWNER)/$(REPO)/$*:latest \
+	  --push \
+	  .
+
+images: $(addprefix image-,$(SERVICES))
+
+images-push: $(addprefix push-,$(SERVICES))

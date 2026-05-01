@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shop-backend
+  namespace: shopx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shop-backend
+  template:
+    metadata:
+      labels:
+        app: shop-backend
+    spec:
+      initContainers:
+        - name: wait-for-kafka-topic
+          image: apache/kafka:4.0.0
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -e
+              echo "waiting for kafka topic orders.created..."
+              until /opt/kafka/bin/kafka-topics.sh \
+                    --bootstrap-server kafka:9092 \
+                    --describe --topic orders.created >/dev/null 2>&1; do
+                sleep 2
+              done
+              echo "topic orders.created is ready"
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits:   { cpu: 200m, memory: 256Mi }
+      containers:
+        - name: shop-backend
+          image: ghcr.io/egortarasov/k8s-hw/shop-backend:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: shop-backend
+            - secretRef:
+                name: shop-backend
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi

@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shop-backend
+  namespace: shopx
+data:
+  SHOP_LISTEN: "0.0.0.0:8081"
+  SHOP_AUTH_GRPC: "auth-service:9090"
+  SHOP_KAFKA_BROKERS: "kafka:9092"
+  SHOP_ORDERS_TOPIC: "orders.created"

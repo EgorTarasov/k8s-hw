@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-worker
+  namespace: shopx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-worker
+  template:
+    metadata:
+      labels:
+        app: order-worker
+    spec:
+      initContainers:
+        - name: wait-for-kafka-topic
+          image: apache/kafka:4.0.0
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -e
+              echo "waiting for kafka topic orders.created..."
+              until /opt/kafka/bin/kafka-topics.sh \
+                    --bootstrap-server kafka:9092 \
+                    --describe --topic orders.created >/dev/null 2>&1; do
+                sleep 2
+              done
+              echo "topic orders.created is ready"
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits:   { cpu: 200m, memory: 256Mi }
+      containers:
+        - name: order-worker
+          image: ghcr.io/egortarasov/k8s-hw/order-worker:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: order-worker
+            - secretRef:
+                name: order-worker
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
