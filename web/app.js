@@ -7,7 +7,7 @@ import { Order } from '/views/order.js';
 const { createApp, reactive } = Vue;
 const { createRouter, createWebHashHistory } = VueRouter;
 
-export const API_BASE = window.SHOPX_API_BASE || 'http://localhost:8081';
+export const API_BASE = window.SHOPX_API_BASE ?? '';
 
 export const auth = reactive({
   token: localStorage.getItem('session_token') || '',

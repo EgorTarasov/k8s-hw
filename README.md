@@ -1,450 +1,143 @@
-# Домашнее задание 5: `shopx`
+# Домашнее задание: k8s
 
-В этом задании нужно реализовать многосервисное приложение на тему **`Интернет-магазин X`**.
-Тематика магазина может быть любой: книги, электроника, мерч, настольные игры, кофе, одежда и так далее.
-Главное, чтобы технический контракт задания был соблюдён.
+Развёртывание учебного микросервисного приложения `shopx` (`auth-service`,
+`shop-backend`, `order-worker`, `web`) и его инфраструктуры (`postgres`,
+`redis`, `kafka`) в Kubernetes-кластере.
 
-## Описание задачи
+## Архитектура
 
-Нужно реализовать учебную микросервисную систему из трёх процессов:
+```mermaid
+flowchart LR
+    user((user)) -->|NodePort 30080| web
+    web -->|/api proxy| backend[shop-backend]
+    backend -->|gRPC| auth[auth-service]
+    backend -->|produce orders.created| kafka[(kafka)]
+    backend --> pg[(postgres)]
+    auth --> pg
+    auth --> redis[(redis)]
+    worker[order-worker] -->|consume orders.created| kafka
+    worker --> pg
+```
 
-1. `shop-backend` — основной HTTP-бэкенд магазина;
-2. `auth-service` — сервис авторизации, доступный для backend только по `gRPC`;
-3. `order-worker` — многопоточный сервис обработки очереди заказов.
+Все ресурсы живут в namespace `shopx`. Stateful-компоненты (`postgres`,
+`redis`, `kafka`) — `StatefulSet` + headless `Service` + PVC через
+`volumeClaimTemplates`. Stateless Go-сервисы и `web` — `Deployment` +
+`ClusterIP`. Снаружи доступен только `web` через `NodePort 30080`.
 
-Архитектура должна выглядеть так:
+## Структура манифестов
 
-- пользователь работает с `shop-backend` по HTTP/JSON;
-- `shop-backend` вызывает `auth-service` по `gRPC`;
-- `auth-service` хранит пользователей в `Postgres`;
-- `auth-service` хранит пользовательские сессии в `Redis`;
-- после оформления заказа `shop-backend` публикует событие в `Kafka`;
-- `order-worker` читает сообщения из Kafka и обрабатывает заказы конкурентно, используя `goroutines` и `channels`.
+```
+k8s/base/
+├── namespace.yaml
+├── postgres/      0-secret · 1-service · 2-statefulset
+├── redis/         0-service · 1-statefulset
+├── kafka/         0-service · 1-statefulset
+├── auth-service/  0-secret · 1-configmap · 2-deployment · 3-service
+├── shop-backend/  0-secret · 1-configmap · 2-deployment · 3-service
+├── order-worker/  0-secret · 1-configmap · 2-deployment
+└── web/           0-deployment · 1-service (NodePort)
+```
 
-Фронтенд, HTML и браузерный интерфейс не требуются. Достаточно HTTP API.
+Файлы пронумерованы внутри компонента для удобного чтения; порядок
+применения через `kubectl apply -R -f k8s/base` некритичен — controller
+loop сам разрулит зависимости.
 
-## Требования к сдаче
+## Конфигурация через env
 
-1. Следуй стандартной структуре Go-проекта с несколькими исполняемыми файлами.
-2. В проекте должны быть три собираемых бинарных файла:
-   - `shop-backend`
-   - `auth-service`
-   - `order-worker`
-3. Основной backend обязан работать по HTTP/JSON.
-4. Сервис авторизации обязан работать по `gRPC`.
-5. Хранение пользователей обязательно должно быть в `Postgres`.
-6. Хранение пользовательских сессий обязательно должно быть в `Redis`.
-7. После оформления заказа сообщение обязательно должно публиковаться в `Kafka`.
-8. Обработка заказов должна выполняться отдельным многопоточным сервисом `order-worker`.
-9. В `order-worker` обязательно должно быть осмысленное конкурентное решение: например, `worker pool`, `pipeline`, `fan-out/fan-in`, `producer-consumer`.
-10. Юнит-тесты прикладывать в проект не нужно.
-11. Можно использовать сторонние библиотеки, но проверь, что нужные версии доступны через `https://proxy.golang.org`.
-12. Все сервисы должны корректно завершаться по `SIGINT` и `SIGTERM`.
-13. Схема БД и нужные таблицы должны создаваться автоматически при старте приложения или через встроенную миграцию, запускаемую самим приложением.
+Все Go-сервисы читают параметры из переменных окружения. Имена ключей в
+`ConfigMap`/`Secret` совпадают с именами env-переменных приложения — это
+позволяет подключать весь набор одной строкой:
 
-## Исполняемые файлы
+```yaml
+envFrom:
+  - configMapRef: { name: auth-service }
+  - secretRef:    { name: auth-service }
+```
 
-### 1. `auth-service`
+Чувствительное (DSN с паролем) — в `Secret`, остальное — в `ConfigMap`.
+Флаги CLI остаются и переопределяют env (приоритет: flag > env > default).
 
-**Сборка из:** `cmd/auth-service`
+| Сервис         | ConfigMap                                                                              | Secret                |
+| -------------- | -------------------------------------------------------------------------------------- | --------------------- |
+| `auth-service` | `AUTH_LISTEN`, `AUTH_REDIS_ADDR`                                                       | `AUTH_POSTGRES_DSN`   |
+| `shop-backend` | `SHOP_LISTEN`, `SHOP_AUTH_GRPC`, `SHOP_KAFKA_BROKERS`, `SHOP_ORDERS_TOPIC`             | `SHOP_POSTGRES_DSN`   |
+| `order-worker` | `WORKER_KAFKA_BROKERS`, `WORKER_ORDERS_TOPIC`, `WORKER_GROUP_ID`, `WORKER_CONCURRENCY` | `WORKER_POSTGRES_DSN` |
 
-**Назначение:** регистрация пользователя, логин, валидация сессии.
+## Образы и реестр
 
-**Синтаксис запуска:**
+Образы публикуются в **GitHub Container Registry**: `ghcr.io/egortarasov/k8s-hw/<service>:dev`.
 
 ```bash
-auth-service \
-  --listen 127.0.0.1:9090 \
-  --postgres "postgres://shopx:shopx@localhost:5432/shopx?sslmode=disable" \
-  --redis "127.0.0.1:6379"
+# единоразово: логин в ghcr (нужен PAT с write:packages)
+export GITHUB_TOKEN=$(security find-generic-password -s ghcr-token -w)
+make docker-login
+
+# собрать и запушить все образы (auth-service, shop-backend, order-worker, web)
+make images-push
+
+# точечно
+make push-auth-service
+make push-web
 ```
 
-### 2. `shop-backend`
+Параметры Makefile: `REGISTRY`, `OWNER`, `REPO`, `TAG` (значения по
+умолчанию см. в `Makefile`).
 
-**Сборка из:** `cmd/shop-backend`
-
-**Назначение:** HTTP API магазина.
-
-**Синтаксис запуска:**
+После первого пуша пакеты в ghcr **приватные**. Сделай их публичными
+(`Package settings → Change visibility → Public`) или создай в кластере
+`imagePullSecret`:
 
 ```bash
-shop-backend \
-  --listen 127.0.0.1:8080 \
-  --auth-grpc 127.0.0.1:9090 \
-  --postgres "postgres://shopx:shopx@localhost:5432/shopx?sslmode=disable" \
-  --kafka "localhost:9092" \
-  --orders-topic "orders.created"
+kubectl -n shopx create secret docker-registry ghcr \
+  --docker-server=ghcr.io \
+  --docker-username=egortarasov \
+  --docker-password="$GITHUB_TOKEN"
+
+kubectl -n shopx patch sa default \
+  -p '{"imagePullSecrets":[{"name":"ghcr"}]}'
 ```
 
-### 3. `order-worker`
-
-**Сборка из:** `cmd/order-worker`
-
-**Назначение:** конкурентная обработка заказов из Kafka.
-
-**Синтаксис запуска:**
+## Развёртывание
 
 ```bash
-order-worker \
-  --postgres "postgres://shopx:shopx@localhost:5432/shopx?sslmode=disable" \
-  --kafka "localhost:9092" \
-  --orders-topic "orders.created" \
-  --group-id "shopx-workers" \
-  --workers 3
+kubectl apply -R -f k8s/base
+kubectl -n shopx get pods -w
+open http://localhost:30080
 ```
 
-## Архитектурные требования
-
-### Общая модель
-
-- `shop-backend` не должен хранить пользователей и пароли локально;
-- все операции регистрации, логина и проверки токена должны проходить через `auth-service` по `gRPC`;
-- пароли должны храниться в `Postgres` только в виде хеша;
-- сессии должны храниться в `Redis`;
-- заказ после HTTP-оформления не должен синхронно обрабатываться в backend;
-- backend должен записать заказ в БД со статусом `new`, опубликовать событие в Kafka и быстро вернуть ответ клиенту;
-- `order-worker` должен получать сообщение из Kafka и менять статус заказа минимум по цепочке `new -> processing -> processed` либо `new -> processing -> failed`.
-
-### Конкурентность
-
-`order-worker` — это ключевая многопоточная часть задания.
-
-Минимально требуется:
-
-1. чтение сообщений из Kafka;
-2. передача задач на обработку в несколько горутин;
-3. безопасное обновление статусов заказов без гонок данных;
-4. корректное завершение воркеров по сигналу;
-5. использование как минимум одного узнаваемого concurrency-паттерна.
-
-Примеры допустимых решений:
-
-- `worker pool` для параллельной обработки заказов;
-- `pipeline` вида `consume -> decode -> process -> persist`;
-- `fan-out/fan-in` для распределения сообщений и сбора результатов;
-- `producer-consumer` на каналах;
-- `context cancellation` для graceful shutdown.
-
-## Обязательный gRPC-контракт
-
-В проекте должен быть proto-файл:
-
-```text
-api/auth/v1/auth.proto
-```
-
-Пакет:
-
-```text
-auth.v1
-```
-
-Сервис:
-
-```text
-AuthService
-```
-
-Минимально обязательные RPC:
-
-1. `Register`
-2. `Login`
-3. `Validate`
-
-Рекомендуемый смысл методов:
-
-- `Register` — создать пользователя;
-- `Login` — проверить пароль, создать сессию в Redis и вернуть токен;
-- `Validate` — проверить токен сессии и вернуть данные пользователя.
-
-Для удобства тестирования `auth-service` должен включать **gRPC reflection**.
-
-## Обязательный HTTP API backend
-
-### 1. `POST /api/register`
-
-**Тело запроса:**
-
-```json
-{
-  "email": "alice@example.com",
-  "password": "secret123",
-  "name": "Alice"
-}
-```
-
-**Успешный ответ:** `201 Created`
-
-```json
-{
-  "id": "user-1",
-  "email": "alice@example.com",
-  "name": "Alice"
-}
-```
-
-### 2. `POST /api/login`
-
-**Тело запроса:**
-
-```json
-{
-  "email": "alice@example.com",
-  "password": "secret123"
-}
-```
-
-**Успешный ответ:** `200 OK`
-
-```json
-{
-  "sessionToken": "token-abc"
-}
-```
-
-После логина токен должен быть сохранён в `Redis`.
-
-### 3. `GET /api/me`
-
-Требует HTTP-заголовок:
-
-```text
-X-Session-Token: token-abc
-```
-
-**Успешный ответ:** `200 OK`
-
-```json
-{
-  "id": "user-1",
-  "email": "alice@example.com",
-  "name": "Alice"
-}
-```
-
-Backend должен валидировать токен не самостоятельно, а через `gRPC`-вызов `auth-service`.
-
-### 4. `POST /api/orders`
-
-Требует HTTP-заголовок:
-
-```text
-X-Session-Token: token-abc
-```
-
-**Тело запроса:**
-
-```json
-{
-  "items": [
-    { "sku": "book-1", "qty": 2 },
-    { "sku": "pen-7", "qty": 1 }
-  ]
-}
-```
-
-**Успешный ответ:** `202 Accepted`
-
-```json
-{
-  "id": "order-1",
-  "status": "new"
-}
-```
-
-Поведение:
-
-- backend валидирует пользователя через `auth-service`;
-- создаёт запись о заказе в таблице `orders`;
-- сохраняет заказ со статусом `new`;
-- публикует сообщение в Kafka topic `orders.created`;
-- не обрабатывает заказ синхронно в HTTP-обработчике.
-
-### 5. `GET /api/orders/{id}`
-
-Требует HTTP-заголовок:
-
-```text
-X-Session-Token: token-abc
-```
-
-**Успешный ответ:** `200 OK`
-
-```json
-{
-  "id": "order-1",
-  "userId": "user-1",
-  "status": "processed",
-  "items": [
-    { "sku": "book-1", "qty": 2 },
-    { "sku": "pen-7", "qty": 1 }
-  ]
-}
-```
-
-Допустимые статусы:
-
-- `new`
-- `processing`
-- `processed`
-- `failed`
-
-## Требования к данным
-
-### Таблица `users`
-
-В `Postgres` обязательно должна быть таблица `users` минимум с такими полями:
-
-- `id`
-- `email`
-- `name`
-- `password_hash`
-- `created_at`
-
-Требования:
-
-- `email` должен быть уникальным;
-- пароль в открытом виде хранить запрещено;
-- для хранения хеша рекомендуется `bcrypt`.
-
-### Таблица `orders`
-
-В `Postgres` обязательно должна быть таблица `orders` минимум с такими полями:
-
-- `id`
-- `user_id`
-- `status`
-- `items`
-- `created_at`
-- `updated_at`
-
-Поле `items` может быть реализовано как `JSON/JSONB`, строка JSON или иным понятным способом, если данные
-корректно читаются и возвращаются через API.
-
-### Redis
-
-В `Redis` должны храниться сессии пользователя.
-
-Минимальное ожидаемое поведение:
-
-- после логина появляется запись с токеном;
-- по токену можно определить пользователя;
-- при проверке `/api/me` и защищённых заказов backend получает пользователя через `auth-service`.
-
-Рекомендуемый ключ:
-
-```text
-session:<token>
-```
-
-## Требования к обработке заказов
-
-`order-worker` обязан:
-
-1. подключаться к Kafka;
-2. читать сообщения из topic `orders.created`;
-3. обрабатывать сообщения конкурентно с количеством воркеров `--workers`;
-4. менять статус заказа на `processing`;
-5. после успешной обработки менять статус на `processed`;
-6. при ошибке помечать заказ как `failed`;
-7. корректно закрывать consumer и завершать воркеры по сигналу.
-
-Сама бизнес-логика обработки может быть упрощённой. Например:
-
-- искусственная задержка;
-- проверка состава заказа;
-- имитация резервирования;
-- расчёт стоимости;
-- запись служебного события в лог.
-
-Главное, чтобы было видно асинхронную и конкурентную обработку очереди.
-
-## Требования к завершению
-
-Все три сервиса должны корректно реагировать на `SIGINT` и `SIGTERM`.
-
-Минимально требуется:
-
-1. перестать принимать новые запросы или новые сообщения;
-2. завершить текущие операции корректно;
-3. закрыть соединения с Postgres, Redis, Kafka и gRPC;
-4. завершить процесс без паники и зависания.
-
-## Что не требуется
-
-В этом задании не нужно:
-
-- делать frontend;
-- реализовывать оплату;
-- интегрироваться с внешними платёжными системами;
-- делать полноценный каталог товаров из отдельной БД;
-- реализовывать роли администратора;
-- писать unit-тесты внутри студенческого проекта.
-
-## Пример локального сценария
+Если кластер удалённый — замени `localhost` на адрес ноды
+(`kubectl get nodes -o wide`) или используй port-forward:
 
 ```bash
-# 1. auth-service
-./auth-service \
-  --listen 127.0.0.1:9090 \
-  --postgres "postgres://shopx:shopx@localhost:5432/shopx?sslmode=disable" \
-  --redis "127.0.0.1:6379"
-
-# 2. shop-backend
-./shop-backend \
-  --listen 127.0.0.1:8080 \
-  --auth-grpc 127.0.0.1:9090 \
-  --postgres "postgres://shopx:shopx@localhost:5432/shopx?sslmode=disable" \
-  --kafka "localhost:9092" \
-  --orders-topic "orders.created"
-
-# 3. order-worker
-./order-worker \
-  --postgres "postgres://shopx:shopx@localhost:5432/shopx?sslmode=disable" \
-  --kafka "localhost:9092" \
-  --orders-topic "orders.created" \
-  --group-id "shopx-workers" \
-  --workers 3
+kubectl -n shopx port-forward svc/web 8080:80
 ```
 
-Примеры запросов:
+## Проверка
 
 ```bash
-curl -X POST http://127.0.0.1:8080/api/register \
+kubectl -n shopx get all
+kubectl -n shopx logs deploy/auth-service -f
+kubectl -n shopx logs deploy/order-worker -f
+kubectl -n shopx exec -it postgres-0 -- psql -U shopx -d shopx
+```
+
+End-to-end через nginx-прокси:
+
+```bash
+BASE=http://localhost:30080
+
+curl -X POST $BASE/api/register \
   -H 'Content-Type: application/json' \
   -d '{"email":"alice@example.com","password":"secret123","name":"Alice"}'
 
-curl -X POST http://127.0.0.1:8080/api/login \
+TOKEN=$(curl -s -X POST $BASE/api/login \
   -H 'Content-Type: application/json' \
-  -d '{"email":"alice@example.com","password":"secret123"}'
+  -d '{"email":"alice@example.com","password":"secret123"}' \
+  | jq -r .sessionToken)
 
-curl http://127.0.0.1:8080/api/me \
-  -H 'X-Session-Token: token-abc'
-
-curl -X POST http://127.0.0.1:8080/api/orders \
+curl -X POST $BASE/api/orders \
   -H 'Content-Type: application/json' \
-  -H 'X-Session-Token: token-abc' \
-  -d '{"items":[{"sku":"book-1","qty":2},{"sku":"pen-7","qty":1}]}'
+  -H "X-Session-Token: $TOKEN" \
+  -d '{"items":[{"sku":"book-1","qty":2}]}'
 ```
 
-## Запуск и проверка
-
-Сборка:
-
-```bash
-go build -o auth-service ./cmd/auth-service
-go build -o shop-backend ./cmd/shop-backend
-go build -o order-worker ./cmd/order-worker
-```
-
-Минимум, что должно проходить в автопроверке:
-
-- сборка всех трёх бинарников;
-- регистрация пользователя через backend;
-- логин через backend;
-- появление пользователя в `Postgres`;
-- появление сессии в `Redis`;
-- успешная валидация токена через `gRPC`;
-- создание заказа через backend;
-- асинхронный перевод заказа в `processed` сервисом `order-worker`;
-- graceful shutdown сервисов.

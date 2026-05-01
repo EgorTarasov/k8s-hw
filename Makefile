@@ -1,5 +1,13 @@
 .PHONY: codegen codegen-clean proto proto-lint proto-clean oapi oapi-clean \
-        fmt fmt-check vet staticcheck lint check tools
+        fmt fmt-check vet staticcheck lint check tools \
+        docker-login images images-push image-% push-%
+
+REGISTRY ?= ghcr.io
+OWNER    ?= egortarasov
+REPO     ?= k8s-hw
+TAG      ?= dev
+SERVICES := auth-service shop-backend order-worker web
+IMAGE    = $(REGISTRY)/$(OWNER)/$(REPO)/$*:$(TAG)
 
 GO_PKGS := $(shell go list ./... | grep -v '/internal/generated/')
 GO_FILES := $(shell find . -type f -name '*.go' -not -path './internal/generated/*' -not -path './.git/*')
@@ -47,3 +55,30 @@ lint: fmt-check vet staticcheck
 
 check: lint
 	go build ./...
+
+# Login to ghcr.io. Expects GITHUB_TOKEN (PAT with write:packages) in env.
+docker-login:
+	@test -n "$$GITHUB_TOKEN" || (echo "GITHUB_TOKEN is required (PAT with write:packages)"; exit 1)
+	@echo "$$GITHUB_TOKEN" | docker login $(REGISTRY) -u $(OWNER) --password-stdin
+
+image-web:
+	docker build \
+	  -f Dockerfile.web \
+	  -t $(REGISTRY)/$(OWNER)/$(REPO)/web:$(TAG) \
+	  -t $(REGISTRY)/$(OWNER)/$(REPO)/web:latest \
+	  .
+
+image-%:
+	docker build \
+	  --build-arg SERVICE=$* \
+	  -t $(IMAGE) \
+	  -t $(REGISTRY)/$(OWNER)/$(REPO)/$*:latest \
+	  .
+
+push-%: image-%
+	docker push $(IMAGE)
+	docker push $(REGISTRY)/$(OWNER)/$(REPO)/$*:latest
+
+images: $(addprefix image-,$(SERVICES))
+
+images-push: $(addprefix push-,$(SERVICES))
